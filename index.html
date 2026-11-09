@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#090706">
+<title>Knjiga</title>
+<link href="vendor/fonts/fonts.css" rel="stylesheet">
+<style>
+  :root { --ink: #efe3c8; --dim: rgba(239, 227, 200, 0.55); }
+  html, body { margin: 0; height: 100%; background: #090706; overflow: hidden; }
+  body { font-family: "EB Garamond", Georgia, serif; color: var(--ink); -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+  #ui { position: fixed; inset: 0; pointer-events: none; }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse 75% 70% at 50% 46%, transparent 55%, rgba(0,0,0,0.55) 100%); }
+  button { font: inherit; color: var(--ink); background: rgba(20, 14, 10, 0.55); border: 1px solid rgba(239, 227, 200, 0.18); border-radius: 999px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; pointer-events: auto; transition: opacity .35s ease, transform .35s ease, background .2s; }
+  button:hover { background: rgba(40, 28, 20, 0.7); }
+  #back { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 16px; padding: 10px 26px 11px; font-size: 20px; letter-spacing: .03em; white-space: nowrap; }
+  #mute { position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px; width: 40px; height: 40px; font-size: 18px; }
+  #mute.off { opacity: .45; text-decoration: line-through; }
+  #title { position: absolute; top: max(18px, calc(env(safe-area-inset-top) + 4px)); left: 80px; right: 80px; text-align: center; color: var(--ink); transition: opacity .5s; pointer-events: none; }
+  #title .book { display: block; font-size: clamp(26px, 2.6vw, 44px); font-weight: 600; letter-spacing: .03em; line-height: 1.1; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.7); }
+  #title .poem { display: block; margin-top: 4px; font-size: clamp(17px, 1.5vw, 24px); font-style: italic; color: var(--dim); min-height: 1.2em; }
+  #pager { position: absolute; bottom: max(14px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; font-size: 17px; color: var(--dim); letter-spacing: .08em; font-variant-numeric: oldstyle-nums; transition: opacity .5s; }
+  #hint { position: absolute; bottom: max(44px, calc(env(safe-area-inset-bottom) + 34px)); left: 16px; right: 16px; text-align: center; font-size: 18px; font-style: italic; opacity: 0; transform: translateY(6px); transition: opacity .6s ease, transform .6s ease; text-shadow: 0 1px 8px #000; }
+  #hint.show { opacity: .85; transform: none; }
+  #scrub { position: absolute; left: 10%; top: 80%; width: min(72vw, 880px); height: 56px; pointer-events: auto; touch-action: none; transition: opacity .45s ease; cursor: pointer; }
+  #scrub.hidden { opacity: 0; pointer-events: none; transform: none; }
+  #scrub .track { position: absolute; left: 14px; right: 14px; top: 0; bottom: 0; }
+  #scrub .rail, #scrub .fill { position: absolute; left: 0; top: 27px; height: 2px; border-radius: 1px; }
+  #scrub .rail { right: 0; background: rgba(239, 227, 200, 0.16); }
+  #scrub .fill { width: 0; background: rgba(239, 227, 200, 0.55); transition: width .35s ease; }
+  #scrub .mark { position: absolute; top: 23px; width: 1px; height: 10px; margin-left: 0; background: rgba(239, 227, 200, 0.5); }
+  #scrub .thumb { position: absolute; top: 17px; left: 0; width: 22px; height: 22px; margin: 0 0 0 -11px; border-radius: 50%; background: #efe3c8; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6); transition: left .35s ease, transform .15s ease; }
+  #scrub.active .thumb, #scrub.active .fill { transition: transform .15s ease; }
+  #scrub.active .thumb { transform: scale(1.25); }
+  #scrub .tip { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); white-space: nowrap; text-align: center; padding: 7px 14px 8px; border-radius: 12px; background: rgba(20, 14, 10, 0.88); border: 1px solid rgba(239, 227, 200, 0.18); font-size: 17px; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+  #scrub .tip span { display: block; font-style: italic; font-size: 15px; color: var(--dim); }
+  #scrub.active .tip { opacity: 1; }
+  .hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(-4px); }
+  #loader { position: fixed; inset: 0; display: grid; place-items: center; background: #090706; font-style: italic; font-size: 20px; color: var(--dim); transition: opacity .9s ease; z-index: 5; }
+  #loader.gone { opacity: 0; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/": "./vendor/three/addons/"
+} }
+</script>
+</head>
+<body>
+<canvas id="c" tabindex="0"></canvas>
+<div id="ui">
+  <div id="vignette"></div>
+  <button id="back" class="hidden" aria-label="Back to shelf">‹ Back to shelf</button>
+  <div id="title" class="hidden"></div>
+  <button id="mute" aria-label="Sound on/off">♪</button>
+  <div id="pager" class="hidden"></div>
+  <div id="hint"></div>
+  <div id="scrub" class="hidden"><div class="track"><div class="rail"></div><div class="fill"></div><div class="marks"></div><div class="thumb"><div class="tip"></div></div></div></div>
+</div>
+<div id="loader">Preparing the library…</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
