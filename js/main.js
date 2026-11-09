@@ -108,17 +108,61 @@ const beamMat = new THREE.ShaderMaterial({
 const beam = new THREE.Mesh(beamGeo, beamMat);
 beam.renderOrder = 10;
 scene.add(beam);
-// dust motes drifting in the beam
+// Dust motes in the beam: hundreds of tiny, soft specks, each drifting on its own slow path
+// in still air and now and then glinting as it turns in the light. Positions are in the
+// beam's unit cone (apex at 0, base at y = -1), so they always stay inside the light.
 {
-  const n = 260, p = new Float32Array(n * 3);
+  const n = 650;
+  const base = new Float32Array(n * 3), seed = new Float32Array(n * 4);
   for (let i = 0; i < n; i++) {
-    const y = -0.15 - Math.random() * 0.8, r = Math.sqrt(Math.random()) * -y * 0.9, a = Math.random() * Math.PI * 2;
-    p[i * 3] = Math.cos(a) * r; p[i * 3 + 1] = y; p[i * 3 + 2] = Math.sin(a) * r;
+    const y = -0.12 - Math.random() * 0.85;
+    const r = Math.sqrt(Math.random()) * -y * 0.85, a = Math.random() * Math.PI * 2;
+    base[i * 3] = Math.cos(a) * r; base[i * 3 + 1] = y; base[i * 3 + 2] = Math.sin(a) * r;
+    const big = Math.random() < 0.06;                       // a few larger fibres among the fine dust
+    seed[i * 4] = big ? 1.4 + Math.random() * 1.2 : 0.35 + Math.pow(Math.random(), 2) * 0.9;  // size
+    seed[i * 4 + 1] = Math.random() * 100;                  // phase
+    seed[i * 4 + 2] = 0.5 + Math.random();                  // drift speed
+    seed[i * 4 + 3] = Math.random();                        // glint rate
   }
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(p, 3));
-  const m = new THREE.PointsMaterial({ color: 0xffe7c2, size: 0.0022, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+  g.setAttribute('position', new THREE.BufferAttribute(base, 3));
+  g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 4));
+  const m = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 }, uPx: { value: 600 }, uColor: { value: new THREE.Color(0xfff0d6) } },
+    vertexShader: `
+      attribute vec4 aSeed;
+      uniform float uTime, uPx;
+      varying float vGlow;
+      void main() {
+        float t = uTime * aSeed.z, ph = aSeed.y;
+        // slow, lazy wandering (a few incommensurate sines read as random drift)
+        vec3 p = position;
+        p.x += 0.030 * sin(t * 0.21 + ph) + 0.012 * sin(t * 0.53 + ph * 1.7);
+        p.z += 0.030 * cos(t * 0.17 + ph * 1.3) + 0.012 * sin(t * 0.47 + ph * 0.6);
+        p.y += 0.020 * sin(t * 0.11 + ph * 0.8);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        // glint: a short bright flash when the mote turns its face to the lamp
+        float s = sin(uTime * (0.6 + aSeed.w * 1.6) + ph * 3.1);
+        float glint = pow(max(s, 0.0), 24.0);
+        vGlow = 0.35 + 0.65 * smoothstep(-0.2, 1.0, sin(uTime * 0.37 + ph)) + glint * 2.2;
+        // ~0.4-1.2 mm specks, sized by distance; very fine ones stay sub-pixel and fade instead
+        float size = aSeed.x * 0.0009 * uPx / -mv.z;
+        vGlow *= clamp(size / 1.2, 0.25, 1.0);
+        gl_PointSize = max(size, 1.2);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uOpacity;
+      varying float vGlow;
+      void main() {
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        float a = exp(-d * d * 3.5) * (1.0 - smoothstep(0.85, 1.0, d));   // soft round speck
+        gl_FragColor = vec4(uColor, a * vGlow * uOpacity);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  });
   beam.userData.dust = new THREE.Points(g, m);
+  beam.userData.dust.frustumCulled = false;
   beam.add(beam.userData.dust);
 }
 
@@ -615,7 +659,10 @@ function updateLights(dt) {
   dim.visible = blend > 0.001;
   readSpot.intensity = 4.2 * blend;
   beamMat.uniforms.uOpacity.value = 0.09 * blend;
-  beam.userData.dust.material.opacity = 0.3 * blend;
+  const dm = beam.userData.dust.material;
+  dm.uniforms.uOpacity.value = 0.55 * blend;
+  dm.uniforms.uTime.value += dt;
+  dm.uniforms.uPx.value = (renderer.domElement.height / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   beam.visible = readSpot.visible = blend > 0.001;
   if (!active || blend <= 0.001) return;
   const book = active.book;
@@ -637,7 +684,6 @@ function updateLights(dt) {
   beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
   const rad = len * Math.tan(READ_ANGLE) * 0.95;
   beam.scale.set(rad, len, rad);
-  beam.userData.dust.rotation.y += dt * 0.04;
   // the dark veil sits behind the book
   const dd = d / zoom.z + 0.18;
   const tanh = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
